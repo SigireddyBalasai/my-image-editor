@@ -1,11 +1,54 @@
-"use client"
+"use client";
 import React, { useState, useRef, useEffect } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import Image from 'next/image';
 import { Upload, Download, Image as ImageIcon } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
+import { uploadToCloudflare } from './service';
+
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+
+const PaymentForm = ({ onSuccess }: { onSuccess: () => void }) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [error, setError] = useState<string | null>(null);
+  const [processing, setProcessing] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setProcessing(true);
+    const { error: submitError } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: window.location.origin,
+      },
+      redirect: 'if_required',
+    });
+
+    if (submitError) {
+      setError(submitError.message || 'Payment failed');
+      setProcessing(false);
+    } else {
+      onSuccess();
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <PaymentElement />
+      <Button type="submit" disabled={!stripe || processing} className="mt-4 w-full">
+        {processing ? 'Processing...' : 'Pay for Image Processing'}
+      </Button>
+      {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+    </form>
+  );
+};
 
 const ImageMaskEditor = () => {
   const [image, setImage] = useState<string | null>(null);
@@ -17,6 +60,9 @@ const ImageMaskEditor = () => {
   const [prompt, setPrompt] = useState('');
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paid, setPaid] = useState(false);
+  const [hasPaid, setHasPaid] = useState(false); // New state to track if user has already paid
   const BRUSH_SIZE = 60;
 
   const imageCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -25,15 +71,10 @@ const ImageMaskEditor = () => {
   const isDrawing = useRef(false);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
 
-  const CLOUD_FLARE_API_URL = "https://api.cloudflare.com/client/v4/accounts/114369a2af575013e09a86cf35e99477/images/v1";
-  const CLOUD_FLARE_API_TOKEN = "p_sctF4Nt8j9Q359O0jtmh6XMd35fjpKhFyeBQu2";
-
   const initializeCanvases = (imageUrl: string): Promise<void> => {
-    console.log('Initializing canvases with image URL:', imageUrl);
     return new Promise((resolve) => {
-      const img = new Image();
+      const img = new window.Image();
       img.onload = () => {
-        console.log('Image loaded:', img);
         const maxWidth = 1024;
         const maxHeight = 1024;
         let newWidth = img.width;
@@ -87,7 +128,6 @@ const ImageMaskEditor = () => {
   };
 
   const clearMask = () => {
-    console.log('Clearing mask');
     if (maskCanvasRef.current && maskContextRef.current) {
       const ctx = maskContextRef.current;
       ctx.fillStyle = 'black';
@@ -99,30 +139,25 @@ const ImageMaskEditor = () => {
 
   useEffect(() => {
     if (image) {
-      console.log('Image state updated:', image);
       initializeCanvases(image);
     }
   }, [image]);
 
   const handleCursorLeave = () => {
-    console.log('Cursor left canvas');
     setShowCursor(false);
     isDrawing.current = false; // Stop drawing when cursor leaves canvas
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (file) {
-      console.log('Image file selected:', file);
       if (file.size > 10 * 1024 * 1024) {
         setError('Image size should be less than 10MB');
-        console.error('Image size exceeds 10MB');
         return;
       }
 
       const reader = new FileReader();
       reader.onload = async (event) => {
-        console.log('Image file read successfully');
         if (event.target?.result) {
           setImage(event.target.result as string);
         }
@@ -130,64 +165,19 @@ const ImageMaskEditor = () => {
       };
       reader.onerror = () => {
         setError('Error reading file');
-        console.error('Error reading file');
       };
       reader.readAsDataURL(file);
     }
   };
-  const uploadToCloudflare = async (fileData: Blob) => {
-    console.log('Uploading to Cloudflare');
-    const formData = new FormData();
-    formData.append("file", fileData);
 
-    try {
-      const response = await fetch(CLOUD_FLARE_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${CLOUD_FLARE_API_TOKEN}`,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Failed to upload to Cloudflare:', errorData);
-        throw new Error(errorData.errors?.[0]?.message || 'Failed to upload to Cloudflare');
-      }
-
-      const data = await response.json();
-      console.log('Upload to Cloudflare successful:', data);
-      return data.result.variants[0];
-    } catch (err) {
-      setError(err.message || 'Failed to upload to Cloudflare');
-      console.error('Error uploading to Cloudflare:', err);
-      throw err;
-    }
-  };
-
-  const processImage = async () => {
-    console.log('Processing image');
-    if (!image || !mask || !prompt) {
-      setError('Please provide an image, mask, and prompt.');
-      console.error('Missing image, mask, or prompt');
-      return;
-    }
-
+  const processImage = async (imageUrl: string, maskUrl: string) => {
     setIsProcessing(true);
     setError(null);
-
+  
     try {
-      const imageBlob = await fetch(image).then((res) => res.blob());
-      const maskBlob = await fetch(mask).then((res) => res.blob());
-
-      const imageUrl = await uploadToCloudflare(imageBlob);
-      const maskUrl = await uploadToCloudflare(maskBlob);
-
       const response = await fetch('/api/replicate', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           version: "95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
           input: {
@@ -198,30 +188,70 @@ const ImageMaskEditor = () => {
           },
         }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Failed to process image:', errorData);
-        throw new Error(errorData.message || 'Failed to process image');
-      }
-
+  
+      if (!response.ok) throw new Error('Failed to process image');
+  
       const data = await response.json();
-      if (!data.output) {
-        console.error('No output received from the server');
-        throw new Error('No output received from the server');
+      console.log('Response:', data);
+      if (Array.isArray(data) && data.length > 0) {
+        setResult(data[0]);
+        console.log('Result:', data[0]);
+      } else {
+        throw new Error('Invalid response format');
       }
-      console.log('Image processed successfully:', data);
-      setResult(data.output);
-    } catch (err) {
-      setError(err.message || 'Failed to process image. Please try again.');
-      console.error('Error processing image:', err);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message || 'Failed to process image');
+      } else {
+        setError('Failed to process image');
+      }
     } finally {
       setIsProcessing(false);
     }
   };
+  
+  const handlePaymentAndProcessImage = async () => {
+    if (!image || !mask || !prompt) {
+      setError('Please provide an image, mask, and prompt.');
+      return;
+    }
+  
+    setError(null);
+  
+    try {
+      const imageBlob = await fetch(image).then((res) => res.blob());
+      const maskBlob = await fetch(mask).then((res) => res.blob());
+  
+      const imageFile = new File([imageBlob], 'image.png', { type: imageBlob.type });
+      const maskFile = new File([maskBlob], 'mask.png', { type: maskBlob.type });
+  
+      const imageUrl = await uploadToCloudflare(imageFile);
+      const maskUrl = await uploadToCloudflare(maskFile);
+  
+      if (!hasPaid) {
+        // Create payment intent first
+        const paymentResponse = await fetch('/api/create-payment-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: 500 }), // $5.00 for image processing
+        });
+  
+        const { clientSecret: secret } = await paymentResponse.json();
+        setClientSecret(secret);
+      } else {
+        // Process image if already paid
+        processImage(imageUrl, maskUrl);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message || 'Failed to prepare image for processing');
+      } else {
+        setError('Failed to prepare image for processing');
+      }
+    }
+  };
 
   const downloadImage = (dataUrl: string, filename: string) => {
-    console.log('Downloading image:', filename);
     const link = document.createElement('a');
     link.href = dataUrl;
     link.download = filename;
@@ -230,11 +260,8 @@ const ImageMaskEditor = () => {
     document.body.removeChild(link);
   };
 
-  const downloadMask = () => {
-    if (!mask) return;
-    console.log('Downloading mask');
-    downloadImage(mask, 'mask.png');
-  };
+  // Removed unused downloadMask function
+
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!maskContextRef.current) return;
     e.preventDefault(); // Prevent unwanted behaviors
@@ -256,7 +283,6 @@ const ImageMaskEditor = () => {
     ctx.beginPath();
     ctx.arc(x, y, BRUSH_SIZE / 2, 0, Math.PI * 2);
     ctx.fill();
-    console.log('Started drawing at:', { x, y });
   }
 
   const updateCursorPosition = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -268,7 +294,6 @@ const ImageMaskEditor = () => {
     const y = e.clientY - rect.top;
     
     setCursorPosition({ x, y });
-    console.log('Cursor position updated:', { x, y });
   }
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -295,17 +320,14 @@ const ImageMaskEditor = () => {
     ctx.stroke();
 
     lastPoint.current = { x, y };
-    console.log('Drawing at:', { x, y });
   };
 
   const handleCursorEnter = () => {
-    console.log('Cursor entered canvas');
     setShowCursor(true);
   };
 
   const stopDrawing = () => {
-    console.log('Stopped drawing');
-      setMask(maskCanvasRef.current?.toDataURL() || null);
+    setMask(maskCanvasRef.current?.toDataURL() || null);
     if (maskCanvasRef.current) {
       setMask(maskCanvasRef.current.toDataURL());
     }
@@ -313,7 +335,6 @@ const ImageMaskEditor = () => {
 
   const downloadResult = () => {
     if (!result) return;
-    console.log('Downloading result');
     downloadImage(result, 'result.png');
   };
 
@@ -343,129 +364,120 @@ const ImageMaskEditor = () => {
             </div>
           ) : (
             <>
-              <Tabs defaultValue="edit">
-                <TabsList className="mb-4">
-                  <TabsTrigger value="edit">Create Mask</TabsTrigger>
-                  <TabsTrigger value="result">Result</TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="edit">
-                  <div className="space-y-4">
-                    <div className="relative border rounded-lg overflow-hidden">
-                      <canvas
-                        ref={imageCanvasRef}
+              <div className="space-y-4">
+                <div className="relative border rounded-lg overflow-hidden">
+                  <canvas
+                    ref={imageCanvasRef}
+                    style={{
+                      maxWidth: '100%',
+                      width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
+                      height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                    }}
+                  />
+                  <div 
+                    className="relative"
+                    style={{
+                      width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
+                      height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
+                    }}
+                  >
+                    <canvas
+                      ref={maskCanvasRef}
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={handleCursorLeave}
+                      onMouseEnter={handleCursorEnter}
+                      style={{
+                        maxWidth: '100%',
+                        width: '100%',
+                        height: '100%',
+                        position: 'relative',
+                        zIndex: 1,
+                        opacity: 0.5,
+                      }}
+                    />
+                    {showCursor && (
+                      <div
+                        className="pointer-events-none absolute border-2 border-white rounded-full"
                         style={{
-                          maxWidth: '100%',
-                          width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
-                          height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
+                          width: `${BRUSH_SIZE}px`,
+                          height: `${BRUSH_SIZE}px`,
+                          transform: `translate(${cursorPosition.x - BRUSH_SIZE/2}px, ${cursorPosition.y - BRUSH_SIZE/2}px)`,
                           position: 'absolute',
                           top: 0,
                           left: 0,
+                          zIndex: 2,
                         }}
                       />
-                      <div 
-                        className="relative"
-                        style={{
-                          width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
-                          height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
-                        }}
-                      >
-                        <canvas
-                          ref={maskCanvasRef}
-                          onMouseDown={startDrawing}
-                          onMouseMove={draw}
-                          onMouseUp={stopDrawing}
-                          onMouseLeave={handleCursorLeave}
-                          onMouseEnter={handleCursorEnter}
-                          style={{
-                            maxWidth: '100%',
-                            width: '100%',
-                            height: '100%',
-                            position: 'relative',
-                            zIndex: 1,
-                            opacity: 0.5,
-                          }}
-                        />
-                        {showCursor && (
-                          <div
-                            className="pointer-events-none absolute border-2 border-white rounded-full"
-                            style={{
-                              width: `${BRUSH_SIZE}px`,
-                              height: `${BRUSH_SIZE}px`,
-                              transform: `translate(${cursorPosition.x - BRUSH_SIZE/2}px, ${cursorPosition.y - BRUSH_SIZE/2}px)`,
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              zIndex: 2,
-                            }}
-                          />
-                        )}
-                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <Input
+                  placeholder="Enter prompt (e.g., 'Face of a yellow cat')"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  className="w-full"
+                />
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={clearMask}
+                    variant="outline"
+                    className="flex-1"
+                    disabled={!mask}
+                  >
+                    Clear Mask
+                  </Button>
+                </div>
+
+                <div className="flex gap-2">
+                  {clientSecret && !paid ? (
+                    <div className="w-full">
+                      <Elements stripe={stripePromise} options={{ clientSecret }}>
+                        <PaymentForm onSuccess={() => {
+                          setPaid(true);
+                          setHasPaid(true); // Set hasPaid to true after successful payment
+                          handlePaymentAndProcessImage();
+                        }} />
+                      </Elements>
                     </div>
-
-                    <Input
-                      placeholder="Enter prompt (e.g., 'Face of a yellow cat')"
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      className="w-full"
-                    />
-
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={clearMask}
-                        variant="outline"
-                        className="flex-1"
-                      >
-                        Clear Mask
-                      </Button>
-                      <Button
-                        onClick={downloadMask}
-                        variant="outline"
-                        className="flex-1"
-                        disabled={!mask}
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        Download Mask
-                      </Button>
-                    </div>
-
+                  ) : (
                     <Button
-                      onClick={processImage}
+                      onClick={() => handlePaymentAndProcessImage()}
                       disabled={isProcessing || !mask || !prompt}
                       className="w-full"
                     >
-                      {isProcessing ? (
-                        'Processing...'
-                      ) : (
+                      {isProcessing ? 'Processing...' : (
                         <>
                           <Upload className="w-4 h-4 mr-2" />
-                          Process Image
+                          Process Image {hasPaid ? '' : '($5.00)'}
                         </>
                       )}
                     </Button>
-                  </div>
-                </TabsContent>
-                
-                <TabsContent value="result">
-                  {result ? (
-                    <div className="space-y-4">
-                      <img
-                        src={result}
-                        alt="Processed result"
-                        className="w-full rounded-lg"
-                      />
-                      <Button onClick={downloadResult} className="w-full">
-                        <Download className="w-4 h-4 mr-2" />
-                        Download Result
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="text-center p-8 text-gray-500">
-                      Process an image to see the result
-                    </div>
                   )}
-                </TabsContent>
-              </Tabs>
+                </div>
+
+                {result && (
+                  <>
+                    <Image
+                      src={result}
+                      alt="Processed result"
+                      className="w-full rounded-lg"
+                      width={imageSize.width}
+                      height={imageSize.height}
+                    />
+                    <Button onClick={downloadResult} className="w-full">
+                      <Download className="w-4 h-4 mr-2" />
+                      Download Result
+                    </Button>
+                  </>
+                )}
+              </div>
 
               {error && (
                 <Alert variant="destructive">

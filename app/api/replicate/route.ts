@@ -28,6 +28,10 @@ export async function POST(req: Request) {
     const data = await response.json();
     console.log('Replicate API response data:', data);
 
+    if (response.status === 201) {
+      return NextResponse.json(data.output);
+    }
+
     return NextResponse.json(data);
   } catch (error) {
     console.error('Error processing image:', error);
