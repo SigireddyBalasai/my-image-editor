@@ -1,0 +1,416 @@
+
+export default ImageMaskEditor;"
+""use client"
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Download, Image as ImageIcon } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+
+const ImageMaskEditor = () => {
+  const [image, setImage] = useState(null);
+  const [mask, setMask] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [prompt, setPrompt] = useState('');
+  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [showCursor, setShowCursor] = useState(false);
+  const BRUSH_SIZE = 60;
+
+  const imageCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskContextRef = useRef<CanvasRenderingContext2D | null>(null);  
+  const isDrawing = useRef(false);
+  const lastPoint = useRef<{ x: number; y: number } | null>(null);
+
+  const initializeCanvases = (imageUrl) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // Calculate maximum dimensions while maintaining aspect ratio
+        const maxWidth = 1024; // Set a reasonable maximum width
+        const maxHeight = 1024; // Set a reasonable maximum height
+        let newWidth = img.width;
+        let newHeight = img.height;
+
+        if (newWidth > maxWidth) {
+          newWidth = maxWidth;
+          newHeight = (img.height * maxWidth) / img.width;
+        }
+        if (newHeight > maxHeight) {
+          newHeight = maxHeight;
+          newWidth = (img.width * maxHeight) / img.height;
+        }
+
+        setImageSize({
+          width: newWidth,
+          height: newHeight
+        });
+        
+        if (imageCanvasRef.current) {
+          const imageCanvas = imageCanvasRef.current;
+          const imageCtx = imageCanvas.getContext('2d');
+          
+          imageCanvas.width = newWidth;
+          imageCanvas.height = newHeight;
+          imageCtx?.drawImage(img, 0, 0, newWidth, newHeight);
+        }
+
+        if (maskCanvasRef.current) {
+          const maskCanvas = maskCanvasRef.current;
+          const maskCtx = maskCanvas.getContext('2d');
+          
+          maskCanvas.width = newWidth;
+          maskCanvas.height = newHeight;
+          if (maskCtx) {
+            maskCtx.fillStyle = 'black'; // Set initial fill color to black
+            maskCtx.fillRect(0, 0, newWidth, newHeight); // Fill entire canvas with black
+            maskCtx.fillStyle = 'white'; // Set drawing color to white
+            maskCtx.lineWidth = BRUSH_SIZE;
+            maskCtx.lineCap = 'round';
+            maskCtx.lineJoin = 'round';
+            maskCtx.strokeStyle = 'white';
+          }
+          
+          maskContextRef.current = maskCtx;
+          resolve();
+        }
+      };
+      img.src = imageUrl;
+    });
+  };
+
+  useEffect(() => {
+    if (image) {
+      initializeCanvases(image);
+    }
+  }, [image]);
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Add file size check
+      if (file.size > 10 * 1024 * 1024) { // 10MB limit
+        setError('Image size should be less than 10MB');
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        setImage(event.target.result);
+        setError(null); // Clear any previous errors
+      };
+      reader.onerror = () => {
+        setError('Error reading file');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+handleCursorEnter
+
+  const startDrawing = (e) => {
+    if (!maskContextRef.current) return;
+    e.preventDefault(); // Prevent unwanted behaviors
+    
+    const canvas = maskCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    
+    isDrawing.current = true;
+    lastPoint.current = { x, y };
+    
+    const ctx = maskContextRef.current;
+    if (!ctx) return;
+    ctx.beginPath();
+    ctx.arc(x, y, BRUSH_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const draw = (e) => {
+    e.preventDefault(); // Prevent unwanted behaviors
+    updateCursorPosition(e);
+    
+    if (!isDrawing.current || !maskContextRef.current) return;
+
+    const canvas = maskCanvasRef.current;
+    const ctx = maskContextRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    ctx.beginPath();
+    if (lastPoint.current) {
+      ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+    }
+    ctx.lineTo(x, y);
+    ctx.stroke();
+
+    lastPoint.current = { x, y };
+  };
+
+  const stopDrawing = () => {
+    isDrawing.current = false;
+    if (maskCanvasRef.current) {
+      setMask(maskCanvasRef.current.toDataURL());
+    }
+  };
+
+  const handleCursorEnter = () => {
+    setShowCursor(true);
+  };
+
+  const handleCursorLeave = () => {
+    setShowCursor(false);
+    isDrawing.current = false; // Stop drawing when cursor leaves canvas
+  };
+
+  const clearMask = () => {
+    if (maskCanvasRef.current && maskContextRef.current) {
+      const ctx = maskContextRef.current;
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+      ctx.fillStyle = 'white';
+      setMask(null);
+    }
+  };
+
+  const processImage = async () => {
+    if (!image || !mask || !prompt) {
+      setError('Please provide an image, mask, and prompt.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/replicate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          version: "95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
+          input: {
+            image: image,
+            mask: mask,
+            prompt: prompt,
+            num_inference_steps: 25
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to process image');
+      }
+
+      const data = await response.json();
+      if (!data.output) {
+        throw new Error('No output received from the server');
+      }
+      setResult(data.output);
+    } catch (err) {
+      setError(err.message || 'Failed to process image. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const downloadImage = (dataUrl, filename) => {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadMask = () => {
+    if (!mask) return;
+    downloadImage(mask, 'mask.png');
+  };
+
+  const downloadResult = () => {
+    if (!result) return;
+    downloadImage(result, 'result.png');
+  };
+
+  return (
+    <Card className="w-full max-w-4xl mx-auto">
+      <CardHeader>
+        <CardTitle>Image Mask Editor</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          {!image ? (
+            <div className="border-2 border-dashed rounded-lg p-8 text-center">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+                id="image-upload"
+              />
+              <label
+                htmlFor="image-upload"
+                className="flex flex-col items-center cursor-pointer"
+              >
+                <ImageIcon className="w-12 h-12 mb-2 text-gray-400" />
+                <span>Click to upload an image (max 10MB)</span>
+              </label>
+            </div>
+          ) : (
+            <>
+              <Tabs defaultValue="edit">
+                <TabsList className="mb-4">
+                  <TabsTrigger value="edit">Create Mask</TabsTrigger>
+                  <TabsTrigger value="result">Result</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="edit">
+                  <div className="space-y-4">
+                    <div className="relative border rounded-lg overflow-hidden">
+                      <canvas
+                        ref={imageCanvasRef}
+                        style={{
+                          maxWidth: '100%',
+                          width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
+                          height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                        }}
+                      />
+                      <div 
+                        className="relative"
+                        style={{
+                          width: imageSize.width > 0 ? `${imageSize.width}px` : 'auto',
+                          height: imageSize.height > 0 ? `${imageSize.height}px` : 'auto',
+                        }}
+                      >
+                        <canvas
+                          ref={maskCanvasRef}
+                          onMouseDown={startDrawing}
+                          onMouseMove={draw}
+                          onMouseUp={stopDrawing}
+                          onMouseLeave={handleCursorLeave}
+                          onMouseEnter={handleCursorEnter}
+                          style={{
+                            maxWidth: '100%',
+                            width: '100%',
+                            height: '100%',
+                            position: 'relative',
+                            zIndex: 1,
+                            opacity: 0.5,
+                          }}
+                        />
+                        {showCursor && (
+                          <div
+                            className="pointer-events-none absolute border-2 border-white rounded-full"
+                            style={{
+                              width: `${BRUSH_SIZE}px`,
+                              height: `${BRUSH_SIZE}px`,
+                              transform: `translate(${cursorPosition.x - BRUSH_SIZE/2}px, ${cursorPosition.y - BRUSH_SIZE/2}px)`,
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              zIndex: 2,
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    <Input
+                      placeholder="Enter prompt (e.g., 'Face of a yellow cat')"
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      className="w-full"
+                    />
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={clearMask}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        Clear Mask
+                      </Button>
+                      <Button
+                        onClick={downloadMask}
+                        variant="outline"
+                        className="flex-1"
+                        disabled={!mask}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Mask
+                      </Button>
+                    </div>
+
+                    <Button
+                      onClick={processImage}
+                      disabled={isProcessing || !mask || !prompt}
+                      className="w-full"
+                    >
+                      {isProcessing ? (
+                        'Processing...'
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4 mr-2" />
+                          Process Image
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="result">
+                  {result ? (
+                    <div className="space-y-4">
+                      <img
+                        src={result}
+                        alt="Processed result"
+                        className="w-full rounded-lg"
+                      />
+                      <Button onClick={downloadResult} className="w-full">
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Result
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="text-center p-8 text-gray-500">
+                      Process an image to see the result
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+export default ImageMaskEditor;"
