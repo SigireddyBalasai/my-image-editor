@@ -9,8 +9,56 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { uploadToCloudflare } from './service';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+const locations = ["Angkor Wat (Cambodia)",
+  "Big Ben and Parliament (London, UK)",
+  "Burj Khalifa (Dubai, UAE)",
+  "Central Park (New York, USA)",
+  "Christ the Redeemer (Rio de Janeiro, Brazil)",
+"  Colosseum (Rome, Italy)",
+  "Disney World (Orlando, USA)",
+  "Eiffel Tower (Paris, France)",
+  "Forbidden City (Beijing, China)",
+  "Golden Gate Bridge (San Francisco, USA)",
+  "Grand Canyon (Arizona, USA)",
+  "Great Barrier Reef (Australia)",
+  "Great Wall of China (China)",
+  "Hagia Sophia (Istanbul, Turkey)",
+  "Hollywood Walk of Fame (Los Angeles, USA)",
+  "Leaning Tower of Pisa (Pisa, Italy)",
+  "Louvre Museum (Paris, France)",
+  "Machu Picchu (Peru)",
+  "Mount Everest (Nepal/Tibet)",
+  "Mount Fuji (Japan)",
+  "Notre Dame Cathedral (Paris, France)",
+  "Opera House (Sydney, Australia)",
+  "Palace of Versailles (Versailles, France)",
+  "Petra (Jordan)",
+  "Pyramids of Giza (Egypt)",
+  "Puerta de Alcalá (Madrid, Spain)",
+  "Puerta de Brandeburgo (Berlin, Germany)",
+  "Santorini (Greece)",
+  "Sagrada Familia (Barcelona, Spain)",
+  "Statue of Liberty (New York, USA)",
+  "Stonehenge (England, UK)",
+  "Taj Mahal (Agra, India)",
+  "Times Square (New York, USA)",
+  "Tokyo Tower (Tokyo, Japan)",
+  "Uluru (Ayers Rock, Australia)",
+  "Vatican Museums (Vatican City)",
+  "Venice Canals (Venice, Italy)",
+  "Victoria Falls (Zambia/Zimbabwe)",
+  "Yellowstone National Park (USA)",
+  "Yosemite National Park (USA)"]
 
 const PaymentForm = ({ onSuccess }: { onSuccess: () => void }) => {
   const stripe = useStripe();
@@ -20,6 +68,7 @@ const PaymentForm = ({ onSuccess }: { onSuccess: () => void }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Payment form submitted');
     if (!stripe || !elements) return;
 
     setProcessing(true);
@@ -32,9 +81,11 @@ const PaymentForm = ({ onSuccess }: { onSuccess: () => void }) => {
     });
 
     if (submitError) {
+      console.error('Payment error:', submitError.message);
       setError(submitError.message || 'Payment failed');
       setProcessing(false);
     } else {
+      console.log('Payment successful');
       onSuccess();
     }
   };
@@ -110,13 +161,13 @@ const ImageMaskEditor = () => {
           maskCanvas.width = newWidth;
           maskCanvas.height = newHeight;
           if (maskCtx) {
-            maskCtx.fillStyle = 'black';
-            maskCtx.fillRect(0, 0, newWidth, newHeight);
             maskCtx.fillStyle = 'white';
+            maskCtx.fillRect(0, 0, newWidth, newHeight);
+            maskCtx.fillStyle = 'black';
             maskCtx.lineWidth = BRUSH_SIZE;
             maskCtx.lineCap = 'round';
             maskCtx.lineJoin = 'round';
-            maskCtx.strokeStyle = 'white';
+            maskCtx.strokeStyle = 'black';
           }
 
           maskContextRef.current = maskCtx;
@@ -128,17 +179,19 @@ const ImageMaskEditor = () => {
   };
 
   const clearMask = () => {
+    console.log('Clear mask clicked');
     if (maskCanvasRef.current && maskContextRef.current) {
       const ctx = maskContextRef.current;
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
       ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+      ctx.fillStyle = 'black';
       setMask(null);
     }
   };
 
   useEffect(() => {
     if (image) {
+      console.log('Image uploaded:', image);
       initializeCanvases(image);
     }
   }, [image]);
@@ -146,13 +199,16 @@ const ImageMaskEditor = () => {
   const handleCursorLeave = () => {
     setShowCursor(false);
     isDrawing.current = false; // Stop drawing when cursor leaves canvas
+    console.log('Cursor left canvas');
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      console.log('Image file selected:', file.name);
       if (file.size > 10 * 1024 * 1024) {
         setError('Image size should be less than 10MB');
+        console.error('Image size exceeds 10MB');
         return;
       }
 
@@ -165,6 +221,7 @@ const ImageMaskEditor = () => {
       };
       reader.onerror = () => {
         setError('Error reading file');
+        console.error('Error reading file');
       };
       reader.readAsDataURL(file);
     }
@@ -173,6 +230,7 @@ const ImageMaskEditor = () => {
   const processImage = async (imageUrl: string, maskUrl: string) => {
     setIsProcessing(true);
     setError(null);
+    console.log('Processing image with prompt:', prompt);
   
     try {
       const response = await fetch('/api/replicate', {
@@ -202,8 +260,10 @@ const ImageMaskEditor = () => {
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message || 'Failed to process image');
+        console.error('Error processing image:', err.message);
       } else {
         setError('Failed to process image');
+        console.error('Unknown error processing image');
       }
     } finally {
       setIsProcessing(false);
@@ -213,10 +273,12 @@ const ImageMaskEditor = () => {
   const handlePaymentAndProcessImage = async () => {
     if (!image || !mask || !prompt) {
       setError('Please provide an image, mask, and prompt.');
+      console.error('Missing image, mask, or prompt');
       return;
     }
   
     setError(null);
+    console.log('Preparing image and mask for processing');
   
     try {
       const imageBlob = await fetch(image).then((res) => res.blob());
@@ -230,6 +292,7 @@ const ImageMaskEditor = () => {
   
       if (!hasPaid) {
         // Create payment intent first
+        console.log('Creating payment intent');
         const paymentResponse = await fetch('/api/create-payment-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -238,20 +301,25 @@ const ImageMaskEditor = () => {
   
         const { clientSecret: secret } = await paymentResponse.json();
         setClientSecret(secret);
+        console.log('Payment intent created, client secret:', secret);
       } else {
         // Process image if already paid
+        console.log('User has already paid, processing image');
         processImage(imageUrl, maskUrl);
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message || 'Failed to prepare image for processing');
+        console.error('Error preparing image for processing:', err.message);
       } else {
         setError('Failed to prepare image for processing');
+        console.error('Unknown error preparing image for processing');
       }
     }
   };
 
   const downloadImage = (dataUrl: string, filename: string) => {
+    console.log('Downloading image:', filename);
     const link = document.createElement('a');
     link.href = dataUrl;
     link.download = filename;
@@ -265,6 +333,7 @@ const ImageMaskEditor = () => {
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!maskContextRef.current) return;
     e.preventDefault(); // Prevent unwanted behaviors
+    console.log('Start drawing');
     
     const canvas = maskCanvasRef.current;
     if (!canvas) return;
@@ -324,6 +393,7 @@ const ImageMaskEditor = () => {
 
   const handleCursorEnter = () => {
     setShowCursor(true);
+    console.log('Cursor entered canvas');
   };
 
   const stopDrawing = () => {
@@ -331,10 +401,12 @@ const ImageMaskEditor = () => {
     if (maskCanvasRef.current) {
       setMask(maskCanvasRef.current.toDataURL());
     }
+    console.log('Stop drawing');
   };
 
   const downloadResult = () => {
     if (!result) return;
+    console.log('Downloading result image');
     downloadImage(result, 'result.png');
   };
 
@@ -417,12 +489,24 @@ const ImageMaskEditor = () => {
                   </div>
                 </div>
 
-                <Input
-                  placeholder="Enter prompt (e.g., 'Face of a yellow cat')"
+                <Select
                   value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  className="w-full"
-                />
+                  onValueChange={(value: string) => {
+                    setPrompt(value);
+                    console.log('Prompt changed:', value);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations.map((location, index) => (
+                      <SelectItem key={index} value={location}>
+                        {location}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
                 <div className="flex gap-2">
                   <Button
